@@ -191,9 +191,23 @@ grep -q '^systemd-run --system --collect --quiet --property=Type=exec --property
   fail "shutdown falls back to the system manager without a user bus" "$(cat "$call_log")"
 pass "shutdown falls back to the system manager without a user bus"
 
+for action in reboot shutdown; do
+  : >"$call_log"
+  rm -f "$CALL_LOG.grace"
+  FAIL_USER_BUS=true env -u XDG_RUNTIME_DIR -u DBUS_SESSION_BUS_ADDRESS "$ROOT/bin/omarchy-system-$action"
+  [[ $(<"$CALL_LOG.bus") == /run/user/$(id -u)* ]] ||
+    fail "$action restores XDG_RUNTIME_DIR for the user manager" "$(cat "$CALL_LOG.bus")"
+  pass "$action restores XDG_RUNTIME_DIR for the user manager"
+done
+
 bus_runtime="$test_tmp/session-runtime"
 mkdir -p "$bus_runtime"
-python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$bus_runtime/bus"
+# Some sandboxes deny binding a Unix socket, so skip only the case that needs one.
+if ! command -v python3 >/dev/null ||
+  ! python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$bus_runtime/bus" 2>/dev/null; then
+  skip "cannot bind a Unix socket here; skipping session bus reconstruction"
+  exit 0
+fi
 
 for action in reboot shutdown; do
   : >"$call_log"
@@ -204,13 +218,4 @@ for action in reboot shutdown; do
   ! grep -q '^systemd-run --system' "$call_log" ||
     fail "$action does not use the system manager when the session bus socket exists" "$(cat "$call_log")"
   pass "$action reconstructs the session bus from XDG_RUNTIME_DIR/bus"
-done
-
-for action in reboot shutdown; do
-  : >"$call_log"
-  rm -f "$CALL_LOG.grace"
-  FAIL_USER_BUS=true env -u XDG_RUNTIME_DIR -u DBUS_SESSION_BUS_ADDRESS "$ROOT/bin/omarchy-system-$action"
-  [[ $(<"$CALL_LOG.bus") == /run/user/$(id -u)* ]] ||
-    fail "$action restores XDG_RUNTIME_DIR for the user manager" "$(cat "$CALL_LOG.bus")"
-  pass "$action restores XDG_RUNTIME_DIR for the user manager"
 done
