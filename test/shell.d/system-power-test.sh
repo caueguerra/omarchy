@@ -17,6 +17,7 @@ cat >"$mock_bin/systemd-run" <<'SH'
 printf 'systemd-run %s\n' "$*" >>"$CALL_LOG"
 [[ ${FAIL_SYSTEMD_RUN:-false} == "true" ]] && exit 1
 if [[ ${1:-} == "--user" ]]; then
+  printf '%s %s\n' "${XDG_RUNTIME_DIR:-}" "${DBUS_SESSION_BUS_ADDRESS:-}" >"$CALL_LOG.bus"
   [[ ${FAIL_USER_BUS:-false} == "true" ]] && exit 1
   [[ -n ${DBUS_SESSION_BUS_ADDRESS:-} && -n ${XDG_RUNTIME_DIR:-} ]] || exit 1
 fi
@@ -198,9 +199,18 @@ for action in reboot shutdown; do
   : >"$call_log"
   rm -f "$CALL_LOG.grace"
   XDG_RUNTIME_DIR="$bus_runtime" env -u DBUS_SESSION_BUS_ADDRESS "$ROOT/bin/omarchy-system-$action"
-  grep -q '^systemd-run --user ' "$call_log" ||
-    fail "$action reconstructs the session bus from XDG_RUNTIME_DIR/bus" "$(cat "$call_log")"
+  [[ $(<"$CALL_LOG.bus") == "$bus_runtime unix:path=$bus_runtime/bus" ]] ||
+    fail "$action reconstructs the session bus from XDG_RUNTIME_DIR/bus" "$(cat "$CALL_LOG.bus")"
   ! grep -q '^systemd-run --system' "$call_log" ||
     fail "$action does not use the system manager when the session bus socket exists" "$(cat "$call_log")"
   pass "$action reconstructs the session bus from XDG_RUNTIME_DIR/bus"
+done
+
+for action in reboot shutdown; do
+  : >"$call_log"
+  rm -f "$CALL_LOG.grace"
+  FAIL_USER_BUS=true env -u XDG_RUNTIME_DIR -u DBUS_SESSION_BUS_ADDRESS "$ROOT/bin/omarchy-system-$action"
+  [[ $(<"$CALL_LOG.bus") == /run/user/$(id -u)* ]] ||
+    fail "$action restores XDG_RUNTIME_DIR for the user manager" "$(cat "$CALL_LOG.bus")"
+  pass "$action restores XDG_RUNTIME_DIR for the user manager"
 done
